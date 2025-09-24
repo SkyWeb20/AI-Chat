@@ -67,33 +67,44 @@ export default async function handler(req: Request) {
         });
     }
 
-    // Pipe the streaming response from OpenRouter to our client
+    // A more robust SSE parser using a TransformStream with buffering
+    let buffer = '';
     const transformStream = new TransformStream({
-        transform(chunk, controller) {
-            const text = new TextDecoder().decode(chunk);
-            // The format from openrouter is `data: {...}\n\n`
-            const lines = text.split('\n');
-            for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                    const jsonStr = line.substring(6).trim();
-                    if (jsonStr === '[DONE]') {
-                        // Signal end of stream if needed, but closing the controller is enough
-                        continue;
-                    }
-                    try {
-                        const parsed = JSON.parse(jsonStr);
-                        const content = parsed.choices?.[0]?.delta?.content;
-                        if (content) {
-                            controller.enqueue(new TextEncoder().encode(content));
-                        }
-                    } catch (e) {
-                        // Incomplete JSON chunks are expected, so we can ignore parse errors
-                    }
-                }
+      transform(chunk, controller) {
+        buffer += new TextDecoder().decode(chunk);
+
+        // Process all complete messages in the buffer
+        let boundary = buffer.indexOf('\n\n');
+        while (boundary !== -1) {
+          const message = buffer.substring(0, boundary);
+          buffer = buffer.substring(boundary + 2); // Keep the rest for the next chunk
+
+          if (message.startsWith('data: ')) {
+            const jsonStr = message.substring(6).trim();
+            if (jsonStr === '[DONE]') {
+              continue; 
             }
+            try {
+              const parsed = JSON.parse(jsonStr);
+              const content = parsed.choices?.[0]?.delta?.content;
+              if (content) {
+                controller.enqueue(new TextEncoder().encode(content));
+              }
+            } catch (e) {
+              console.error('Failed to parse SSE JSON chunk:', jsonStr, e);
+            }
+          }
+          boundary = buffer.indexOf('\n\n');
         }
+      },
+      flush(controller) {
+        // When the stream is closed, try to process any remaining data in the buffer.
+        if (buffer.length > 0) {
+           console.log("Flushing remaining buffer:", buffer);
+        }
+      }
     });
-    
+
     return new Response(openRouterResponse.body.pipeThrough(transformStream), {
       status: 200,
       headers: { 
