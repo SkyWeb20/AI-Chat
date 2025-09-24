@@ -11,7 +11,6 @@
 **[✨ مشاهده دموی زنده ✨](https://ai-chat-three-snowy.vercel.app/)**
 
 ![تصویر پیش‌نمایش برنامه](https://github.com/SkyWeb20/AI-Chat/blob/main/ScreenShot.jpg?raw=true)
-*(پیشنهاد می‌شود این تصویر را با یک اسکرین‌شات واقعی از پروژه جایگزین کنید)*
 
 ---
 
