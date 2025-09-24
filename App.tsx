@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { ChatMessage as Message } from './types';
-import { fetchChatCompletion } from './services/chatService';
+import { fetchChatCompletionStream } from './services/chatService';
 import Header from './components/Header';
 import ChatMessage from './components/ChatMessage';
 import ChatInput from './components/ChatInput';
@@ -20,29 +20,41 @@ const App: React.FC = () => {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, isLoading]);
+  }, [messages]);
 
   const handleSend = async (userInput: string) => {
     if (!userInput.trim()) return;
 
     const userMessage: Message = { role: 'user', content: userInput };
+    const messagesForApi = [...messages, userMessage];
     setMessages(prevMessages => [...prevMessages, userMessage]);
     setIsLoading(true);
 
     try {
-      const apiMessages = [...messages, userMessage].map(({ role, content }) => ({ role, content }));
-      const assistantResponse = await fetchChatCompletion(apiMessages);
-      const assistantMessage: Message = { role: 'assistant', content: assistantResponse };
-      setMessages(prevMessages => [...prevMessages, assistantMessage]);
+      const apiMessages = messagesForApi.map(({ role, content }) => ({ role, content }));
+      let isFirstChunk = true;
+
+      await fetchChatCompletionStream(apiMessages, (chunk) => {
+        if (isFirstChunk) {
+          setIsLoading(false);
+          setMessages(prev => [...prev, { role: 'assistant', content: chunk }]);
+          isFirstChunk = false;
+        } else {
+          setMessages(prev => {
+            const newMessages = [...prev];
+            newMessages[newMessages.length - 1].content += chunk;
+            return newMessages;
+          });
+        }
+      });
     } catch (error) {
       console.error(error);
+      setIsLoading(false);
       const errorMessage: Message = {
         role: 'assistant',
         content: 'متاسفانه خطایی رخ داده است. لطفا دوباره تلاش کنید.',
       };
       setMessages(prevMessages => [...prevMessages, errorMessage]);
-    } finally {
-      setIsLoading(false);
     }
   };
 

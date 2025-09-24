@@ -46,25 +46,61 @@ export default async function handler(req: Request) {
       body: JSON.stringify({
         model: MODEL,
         messages: messages,
+        stream: true, // Enable streaming
       }),
     });
 
-    const data = await openRouterResponse.json();
-
     if (!openRouterResponse.ok) {
-      console.error("OpenRouter API Error:", data);
-      const errorMessage = data.error?.message || 'Failed to get response from AI service.';
+      const errorData = await openRouterResponse.json();
+      console.error("OpenRouter API Error:", errorData);
+      const errorMessage = errorData.error?.message || 'Failed to get response from AI service.';
       return new Response(JSON.stringify({ error: errorMessage }), {
         status: openRouterResponse.status,
         headers: { 'Content-Type': 'application/json' },
       });
     }
+
+    if (!openRouterResponse.body) {
+        return new Response(JSON.stringify({ error: 'Upstream response has no body.' }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' },
+        });
+    }
+
+    // Pipe the streaming response from OpenRouter to our client
+    const transformStream = new TransformStream({
+        transform(chunk, controller) {
+            const text = new TextDecoder().decode(chunk);
+            // The format from openrouter is `data: {...}\n\n`
+            const lines = text.split('\n');
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const jsonStr = line.substring(6).trim();
+                    if (jsonStr === '[DONE]') {
+                        // Signal end of stream if needed, but closing the controller is enough
+                        continue;
+                    }
+                    try {
+                        const parsed = JSON.parse(jsonStr);
+                        const content = parsed.choices?.[0]?.delta?.content;
+                        if (content) {
+                            controller.enqueue(new TextEncoder().encode(content));
+                        }
+                    } catch (e) {
+                        // Incomplete JSON chunks are expected, so we can ignore parse errors
+                    }
+                }
+            }
+        }
+    });
     
-    const content = data.choices[0].message.content;
-    
-    return new Response(JSON.stringify({ content }), {
+    return new Response(openRouterResponse.body.pipeThrough(transformStream), {
       status: 200,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'text/plain; charset=utf-8',
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'no-cache',
+      },
     });
 
   } catch (error) {
